@@ -350,7 +350,16 @@ import * as patternModules from './patterns/index.mjs';
   function updateBackgroundGradient(){
     const t = clock.getElapsedTime();
     const angle = (params.gradientAngle + Math.sin(t*0.05)*8).toFixed(2);
-    container.style.background = `linear-gradient(${angle}deg, ${params.colorA}, ${params.colorB})`;
+    // Use the single `background` control to drive the page background.
+    // Create a subtle two-stop gradient by shifting the background color's lightness.
+    const base = new THREE.Color(params.background);
+    const hsl = {}; base.getHSL(hsl);
+    // produce a slightly lighter and slightly darker variant for the gradient stops
+    const light = new THREE.Color().setHSL(hsl.h, hsl.s, Math.min(1, hsl.l + 0.06));
+    const dark = new THREE.Color().setHSL(hsl.h, hsl.s, Math.max(0, hsl.l - 0.06));
+    const stopA = `rgb(${Math.round(light.r*255)}, ${Math.round(light.g*255)}, ${Math.round(light.b*255)})`;
+    const stopB = `rgb(${Math.round(dark.r*255)}, ${Math.round(dark.g*255)}, ${Math.round(dark.b*255)})`;
+    container.style.background = `linear-gradient(${angle}deg, ${stopA}, ${stopB})`;
   }
 
   function rebuildColors(){
