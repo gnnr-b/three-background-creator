@@ -1,5 +1,6 @@
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.152.2/build/three.module.js';
 import GUI from 'https://cdn.jsdelivr.net/npm/lil-gui@0.18/dist/lil-gui.esm.min.js';
+import * as patternModules from './patterns/index.mjs';
 
 /* ES Module entry for Three-Gen editor (imports module builds of three + lil-gui) */
 (function(){
@@ -105,500 +106,88 @@ import GUI from 'https://cdn.jsdelivr.net/npm/lil-gui@0.18/dist/lil-gui.esm.min.
     }
   }
 
-  // map of available patterns to their factory functions. This makes it easy
-  // to add new patterns or compose them without editing buildPattern.
-  const patternFactories = {
-    'Vortex': createVortex,
-    'Flow Field': createFlowField,
-    'Lissajous': createLissajous,
-    'Fireflies': createFireflies,
-    'Waves': createWaves,
-    'Distorting Plane': createDistortingPlane,
-    'Wireframe Terrain': createWireframeTerrain,
-    'Raymarching': createRaymarching
-  };
+  // Three.js computing a bounding sphere with NaN values (which throws runtime errors).
+  function validateGeometry(geometry, patternName){
+    if(!geometry || !geometry.attributes) return true;
+    const pos = geometry.attributes.position;
+    if(!pos || !pos.array) return true;
+    const arr = pos.array;
+    for(let i=0;i<arr.length;i++){
+      const v = arr[i];
+      if(!isFinite(v)){
+        console.error(`Geometry validation failed for pattern \"${patternName}\": position[${i}] =`, v);
+        return false;
+      }
+    }
+    return true;
+  }
+
+  // Attempt to sanitize a geometry's position attribute by replacing non-finite
+  // values with a sensible fallback. If `basePos` is available we use that,
+  // otherwise we set the component to 0. Returns number of fixes applied.
+  function sanitizeGeometry(geometry, patternName, child){
+    if(!geometry || !geometry.attributes) return 0;
+    const pos = geometry.attributes.position;
+    if(!pos || !pos.array) return 0;
+    const arr = pos.array;
+    const baseAttr = geometry.attributes.basePos || (child && child.userData && child.userData.basePos ? { array: child.userData.basePos } : null);
+    let fixes = 0;
+    for(let i=0;i<arr.length;i++){
+      const v = arr[i];
+      if(!isFinite(v)){
+        fixes++;
+        const fallback = baseAttr && baseAttr.array && baseAttr.array[i] !== undefined ? baseAttr.array[i] : 0.0;
+        arr[i] = Number.isFinite(fallback) ? fallback : 0.0;
+      }
+    }
+    if(fixes > 0){
+      console.warn(`sanitizeGeometry: repaired ${fixes} invalid position components for pattern "${patternName}"`);
+      try{ pos.needsUpdate = true; }catch(e){}
+    }
+    return fixes;
+  }
+  // and `buildPattern()` prefers the modular `patternModules.patternFactories`.
+  const patternFactories = {};
 
   function buildPattern(){
     clearGroup();
     const p = params.pattern;
-    const factory = patternFactories[p] || createVortex;
-    factory();
-  }
-
-  function createParticles(){
-    // Create particles positioned to fill the camera frustum (so they cover the full background)
-    const geometry = new THREE.BufferGeometry();
-    const positions = new Float32Array(params.count * 3);
-    const colors = new Float32Array(params.count * 3);
-    const baseColors = new Float32Array(params.count * 3);
-    const colorA = new THREE.Color(params.colorA);
-    const colorB = new THREE.Color(params.colorB);
-
-    // arrays for circular/orbit motion per particle
-    const centerX = new Float32Array(params.count);
-    const centerY = new Float32Array(params.count);
-    const radius = new Float32Array(params.count);
-    const angle = new Float32Array(params.count);
-    const angVel = new Float32Array(params.count);
-
-    // derive frustum size at z=0 so particles fill view
-    const frustumHeight = 2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2) * camera.position.z;
-    const frustumWidth = frustumHeight * camera.aspect;
-
-    // generate a few swirl centers inside the frustum
-    const centers = [];
-    for(let c=0;c<params.centers;c++){
-      centers.push({ x: (Math.random()-0.5) * frustumWidth * 0.8, y: (Math.random()-0.5) * frustumHeight * 0.8 });
-    }
-
-    for(let i=0;i<params.count;i++){
-      const i3 = i*3;
-      // fill the full frustum rectangle
-      const x = (Math.random()-0.5) * frustumWidth * 1.0;
-      const y = (Math.random()-0.5) * frustumHeight * 1.0;
-      const z = (Math.random()-0.5) * Math.min(400, params.spread * 0.6);
-      positions[i3+0] = x;
-      positions[i3+1] = y;
-      positions[i3+2] = z;
-
-      const t = Math.random();
-      const c = colorA.clone().lerp(colorB, t);
-      colors[i3+0] = c.r; colors[i3+1] = c.g; colors[i3+2] = c.b;
-      baseColors[i3+0] = c.r; baseColors[i3+1] = c.g; baseColors[i3+2] = c.b;
-
-      // assign an orbit center for this particle
-      const ci = Math.floor(Math.random() * centers.length);
-      const cx = centers[ci].x + (Math.random()-0.5) * frustumWidth * 0.06;
-      const cy = centers[ci].y + (Math.random()-0.5) * frustumHeight * 0.06;
-      centerX[i] = cx; centerY[i] = cy;
-
-      // radius from center (so particles orbit around their assigned center)
-      const r0 = Math.hypot(x - cx, y - cy);
-      radius[i] = r0 * (0.4 + Math.random() * 1.6);
-      angle[i] = Math.atan2(y - cy, x - cx);
-      angVel[i] = (0.2 + Math.random() * 1.6) * (0.3 + Math.random() * 1.4);
-    }
-
-    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-    geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-    geometry.setAttribute('baseColor', new THREE.BufferAttribute(baseColors, 3));
-
-    const material = new THREE.PointsMaterial({ size: params.size, vertexColors: true, depthWrite:false, transparent:true, opacity:0.95 });
-    const points = new THREE.Points(geometry, material);
-    points.userData.type = 'Particles';
-    points.userData.centerX = centerX;
-    points.userData.centerY = centerY;
-    points.userData.radius = radius;
-    points.userData.angle = angle;
-    points.userData.angVel = angVel;
-    group.add(points);
-  }
-
-  
-
-  function createWaves(){
-    const width = Math.min(1400, params.spread*2);
-    const height = Math.min(600, params.spread);
-    const segX = 200; const segY = 40;
-    const geometry = new THREE.PlaneGeometry(width, height, segX, segY);
-    const colorA = new THREE.Color(params.colorA);
-    const colorB = new THREE.Color(params.colorB);
-
-    const pos = geometry.attributes.position;
-    const cols = new Float32Array(pos.count * 3);
-    for(let i=0;i<pos.count;i++){
-      const t = i / pos.count;
-      const c = colorA.clone().lerp(colorB, t);
-      cols[i*3+0] = c.r; cols[i*3+1] = c.g; cols[i*3+2] = c.b;
-    }
-    geometry.setAttribute('color', new THREE.BufferAttribute(cols, 3));
-
-    const mat = new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide, wireframe:false });
-    const mesh = new THREE.Mesh(geometry, mat);
-    mesh.rotation.x = -0.5;
-    mesh.userData.type = 'Waves';
-    mesh.userData.basePos = geometry.attributes.position.array.slice();
-    group.add(mesh);
-  }
-
-  // --- New animations ---
-  function createVortex(){
-    const geometry = new THREE.BufferGeometry();
-    const positions = new Float32Array(params.count * 3);
-    const colors = new Float32Array(params.count * 3);
-    const baseColors = new Float32Array(params.count * 3);
-
-    // per-particle orbit data
-    const cx = new Float32Array(params.count);
-    const cy = new Float32Array(params.count);
-    const radius = new Float32Array(params.count);
-    const angle = new Float32Array(params.count);
-    const angVel = new Float32Array(params.count);
-    const spiral = new Float32Array(params.count);
-
-    // frustum at z=0
-    const frustumHeight = 2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2) * camera.position.z;
-    const frustumWidth = frustumHeight * camera.aspect;
-
-    // generate swirl centers
-    const centers = [];
-    for(let i=0;i<params.centers;i++) centers.push({ x: (Math.random()-0.5)*frustumWidth*0.8, y: (Math.random()-0.5)*frustumHeight*0.8 });
-
-    for(let i=0;i<params.count;i++){
-      const i3 = i*3;
-      const x = (Math.random()-0.5) * frustumWidth;
-      const y = (Math.random()-0.5) * frustumHeight;
-      positions[i3+0] = x; positions[i3+1] = y; positions[i3+2] = (Math.random()-0.5)*200;
-
-      const t = Math.random();
-      const col = new THREE.Color(params.colorA).lerp(new THREE.Color(params.colorB), t);
-      colors[i3+0]=col.r; colors[i3+1]=col.g; colors[i3+2]=col.b;
-      baseColors[i3+0]=col.r; baseColors[i3+1]=col.g; baseColors[i3+2]=col.b;
-
-      const ci = Math.floor(Math.random()*centers.length);
-      cx[i] = centers[ci].x + (Math.random()-0.5)*frustumWidth*0.06;
-      cy[i] = centers[ci].y + (Math.random()-0.5)*frustumHeight*0.06;
-      const r0 = Math.hypot(x-cx[i], y-cy[i]);
-      radius[i] = Math.max(10, r0 * (0.4 + Math.random()*1.6));
-      angle[i] = Math.atan2(y-cy[i], x-cx[i]);
-      angVel[i] = (0.3 + Math.random()*1.2) * (Math.random()<0.5? -1: 1);
-      spiral[i] = (Math.random()-0.5) * 0.6;
-    }
-
-    geometry.setAttribute('position', new THREE.BufferAttribute(positions,3));
-    geometry.setAttribute('color', new THREE.BufferAttribute(colors,3));
-    geometry.setAttribute('baseColor', new THREE.BufferAttribute(baseColors,3));
-
-    const mat = new THREE.PointsMaterial({ size: params.size, vertexColors:true, transparent:true, opacity:0.95, blending:THREE.AdditiveBlending, depthTest:false });
-    const pts = new THREE.Points(geometry, mat);
-    pts.userData.type = 'Vortex';
-    pts.userData.cx = cx; pts.userData.cy = cy; pts.userData.radius = radius; pts.userData.angle = angle; pts.userData.angVel = angVel; pts.userData.spiral = spiral;
-    group.add(pts);
-  }
-
-  function createFlowField(){
-    const geometry = new THREE.BufferGeometry();
-    const positions = new Float32Array(params.count * 3);
-    const colors = new Float32Array(params.count * 3);
-
-    const frustumHeight = 2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2) * camera.position.z;
-    const frustumWidth = frustumHeight * camera.aspect;
-
-    const seeds = new Float32Array(params.count);
-    for(let i=0;i<params.count;i++){
-      const i3 = i*3;
-      positions[i3+0] = (Math.random()-0.5) * frustumWidth * 1.1;
-      positions[i3+1] = (Math.random()-0.5) * frustumHeight * 1.1;
-      positions[i3+2] = (Math.random()-0.5) * 300;
-      const t = Math.random();
-      const c = new THREE.Color(params.colorA).lerp(new THREE.Color(params.colorB), t);
-      colors[i3+0]=c.r; colors[i3+1]=c.g; colors[i3+2]=c.b;
-      seeds[i] = Math.random()*1000;
-    }
-
-    geometry.setAttribute('position', new THREE.BufferAttribute(positions,3));
-    geometry.setAttribute('color', new THREE.BufferAttribute(colors,3));
-
-    const mat = new THREE.PointsMaterial({ size: params.size*0.9, vertexColors:true, transparent:true, opacity:0.9, depthTest:false });
-    const pts = new THREE.Points(geometry, mat);
-    pts.userData.type = 'Flow Field';
-    pts.userData.seeds = seeds;
-    group.add(pts);
-  }
-
-  function createLissajous(){
-    const geometry = new THREE.BufferGeometry();
-    const positions = new Float32Array(params.count * 3);
-    const colors = new Float32Array(params.count * 3);
-    const aArr = new Float32Array(params.count);
-    const bArr = new Float32Array(params.count);
-    const phase = new Float32Array(params.count);
-
-    const ampX = Math.min(1200, params.spread*1.2);
-    const ampY = Math.min(800, params.spread*0.8);
-
-    for(let i=0;i<params.count;i++){
-      const i3 = i*3;
-      positions[i3+0] = 0; positions[i3+1]=0; positions[i3+2]=(Math.random()-0.5)*200;
-      const t = Math.random();
-      const c = new THREE.Color(params.colorA).lerp(new THREE.Color(params.colorB), t);
-      colors[i3+0]=c.r; colors[i3+1]=c.g; colors[i3+2]=c.b;
-      aArr[i] = 1 + Math.floor(Math.random()*6);
-      bArr[i] = 1 + Math.floor(Math.random()*6);
-      phase[i] = Math.random()*Math.PI*2;
-    }
-
-    geometry.setAttribute('position', new THREE.BufferAttribute(positions,3));
-    geometry.setAttribute('color', new THREE.BufferAttribute(colors,3));
-    const mat = new THREE.PointsMaterial({ size: params.size, vertexColors:true, transparent:true, opacity:0.95, depthTest:false });
-    const pts = new THREE.Points(geometry, mat);
-    pts.userData.type = 'Lissajous';
-    pts.userData.a = aArr; pts.userData.b = bArr; pts.userData.phase = phase; pts.userData.ampX = ampX; pts.userData.ampY = ampY;
-    group.add(pts);
-  }
-
-  function createFireflies(){
-    const geometry = new THREE.BufferGeometry();
-    const positions = new Float32Array(params.count * 3);
-    const colors = new Float32Array(params.count * 3);
-    const intensity = new Float32Array(params.count);
-
-    const frustumHeight = 2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2) * camera.position.z;
-    const frustumWidth = frustumHeight * camera.aspect;
-
-    for(let i=0;i<params.count;i++){
-      const i3 = i*3;
-      positions[i3+0] = (Math.random()-0.5) * frustumWidth;
-      positions[i3+1] = (Math.random()-0.5) * frustumHeight;
-      positions[i3+2] = (Math.random()-0.5) * 200;
-      const col = new THREE.Color(params.colorA).lerp(new THREE.Color(params.colorB), Math.random());
-      colors[i3+0]=col.r; colors[i3+1]=col.g; colors[i3+2]=col.b;
-      intensity[i] = Math.random();
-    }
-
-    geometry.setAttribute('position', new THREE.BufferAttribute(positions,3));
-    geometry.setAttribute('color', new THREE.BufferAttribute(colors,3));
-
-    const mat = new THREE.PointsMaterial({ size: params.size*1.8, vertexColors:true, transparent:true, opacity:0.9, blending:THREE.AdditiveBlending, depthTest:false });
-    const pts = new THREE.Points(geometry, mat);
-    pts.userData.type = 'Fireflies';
-    pts.userData.intensity = intensity;
-    group.add(pts);
-  }
-
-  // --- Shader-based geometric primitives ---
-  // Simple layered-sine displacement shader (fast, visually rich)
-  const primitiveVertex = `
-    uniform float time;
-    uniform float distortion;
-    uniform float speed;
-    uniform float intensity;
-    varying vec3 vNormal;
-    varying vec3 vPosition;
-    void main(){
-      vNormal = normal;
-      vPosition = position;
-      float t = time * speed;
-      // layered sine turbulence
-      float d = sin((position.x + t) * 0.8) * 0.5;
-      d += sin((position.y - t*0.9) * 1.3) * 0.35;
-      d += sin((position.z*0.5 + t*1.2) * 0.6) * 0.25;
-      d *= distortion * intensity;
-      vec3 displaced = position + normal * d;
-      gl_Position = projectionMatrix * modelViewMatrix * vec4(displaced, 1.0);
-    }
-  `;
-
-  const primitiveFragment = `
-    uniform vec3 colorA;
-    uniform vec3 colorB;
-    uniform float time;
-    varying vec3 vNormal;
-    varying vec3 vPosition;
-    void main(){
-      float n = dot(normalize(vNormal), vec3(0.0,0.0,1.0)) * 0.5 + 0.5;
-      float pulse = 0.5 + 0.5 * sin(time * 3.0 + length(vPosition) * 0.02);
-      vec3 c = mix(colorA, colorB, n * pulse);
-      gl_FragColor = vec4(c, 1.0);
-    }
-  `;
-
-
-  function createDistortingPlane(){
-    // Full-screen plane with vertex displacement in view-space
-    const geom = new THREE.PlaneGeometry(2,2, 64,64);
-    const planeVert = `
-      uniform float time; uniform float distortion; uniform float speed; varying vec2 vUv; void main(){ vUv = uv; vec3 p = position; float t=time*speed; float d = sin((uv.x+ t)*10.0) * 0.1 + cos((uv.y - t)*12.0)*0.08; p.z += d * distortion * 200.0; gl_Position = projectionMatrix * modelViewMatrix * vec4(p,1.0); }
-    `;
-    const planeFrag = `
-      uniform vec3 colorA; uniform vec3 colorB; uniform float time; varying vec2 vUv; void main(){ float m = 0.5 + 0.5 * sin(time*1.5 + vUv.x*10.0); vec3 c = mix(colorA, colorB, m); gl_FragColor = vec4(c,1.0); }
-    `;
-    const mat = new THREE.ShaderMaterial({ vertexShader: planeVert, fragmentShader: planeFrag, uniforms: { time:{value:0}, distortion:{value:params.shaderDistortion}, speed:{value:params.shaderSpeed}, colorA:{value:new THREE.Color(params.colorA)}, colorB:{value:new THREE.Color(params.colorB)} }, side:THREE.DoubleSide });
-    const mesh = new THREE.Mesh(geom, mat);
-    mesh.scale.set(1000,1000,1);
-    mesh.userData.type = 'Distorting Plane';
-    mesh.position.set(0,0,-300);
-    group.add(mesh);
-  }
-
-  // (old gradient-noise plane removed earlier)
-  function createRaymarching(){
-    // Fullscreen raymarching quad (screen-space SDF raymarch)
-    const geom = new THREE.PlaneGeometry(2,2);
-    const frag = `
-      precision highp float;
-      uniform float time;
-      uniform vec2 resolution;
-      uniform float steps;
-      uniform float maxDistance;
-      uniform float epsilon;
-      uniform vec3 lightPos;
-      uniform vec3 colorA;
-      uniform vec3 colorB;
-      uniform vec3 bgColor;
-      uniform float useGradient;
-      uniform float sphereModAmp;
-      uniform float sphereModFreq;
-      uniform float noiseScale;
-      uniform float noiseSpeed;
-      uniform float noiseIntensity;
-      varying vec2 vUv;
-
-      // hash / noise / fbm (iq style)
-      vec2 hash2(vec2 p){ p = vec2(dot(p, vec2(127.1,311.7)), dot(p, vec2(269.5,183.3))); return -1.0 + 2.0*fract(sin(p)*43758.5453123); }
-      float noise(vec2 p){
-        vec2 i = floor(p);
-        vec2 f = fract(p);
-        vec2 u = f*f*(3.0-2.0*f);
-        float a = dot(hash2(i + vec2(0.0,0.0)), f - vec2(0.0,0.0));
-        float b = dot(hash2(i + vec2(1.0,0.0)), f - vec2(1.0,0.0));
-        float c = dot(hash2(i + vec2(0.0,1.0)), f - vec2(0.0,1.0));
-        float d = dot(hash2(i + vec2(1.0,1.0)), f - vec2(1.0,1.0));
-        return mix(mix(a,b,u.x), mix(c,d,u.x), u.y);
-      }
-      float fbm(vec2 p){ float v = 0.0; float a = 0.5; for(int i=0;i<5;i++){ v += a * noise(p); p *= 2.0; a *= 0.5; } return v; }
-
-      // SDFs
-      float sdSphere(vec3 p, float r){ return length(p) - r; }
-
-      // map returns distance and an ID (1.0 = sphere)
-      vec2 map(vec3 p){
-        // sphere center in front of camera (only sphere, no plane)
-        vec3 sc = vec3(0.0, 0.0, 500.0);
-        float t = time * noiseSpeed;
-        float n = fbm((p.xy + vec2(t)) * noiseScale) * noiseIntensity;
-        float mod = sin(time * sphereModFreq + n * 6.2831) * sphereModAmp;
-        float baseR = 120.0;
-        float r = baseR + mod;
-        float dSphere = sdSphere(p - sc, r);
-        return vec2(dSphere, 1.0);
-      }
-
-      // approximate normal by central differences
-      vec3 calcNormal(vec3 p){
-        float h = max(epsilon, 0.0005);
-        vec3 dx = vec3(h, 0.0, 0.0);
-        vec3 dy = vec3(0.0, h, 0.0);
-        vec3 dz = vec3(0.0, 0.0, h);
-        float nx = map(p + dx).x - map(p - dx).x;
-        float ny = map(p + dy).x - map(p - dy).x;
-        float nz = map(p + dz).x - map(p - dz).x;
-        return normalize(vec3(nx, ny, nz));
-      }
-
-      void main(){
-        vec2 uv = (vUv - 0.5) * vec2(resolution.x / resolution.y, 1.0);
-        vec3 ro = vec3(0.0, 0.0, -200.0);
-        vec3 rd = normalize(vec3(uv, 1.0));
-
-        float tRay = 0.0;
-        float hitId = -1.0;
-        for(int i=0;i<512;i++){
-          if(float(i) >= steps) break;
-          vec3 p = ro + rd * tRay;
-          vec2 m = map(p);
-          float d = m.x;
-          hitId = m.y;
-          if(d < epsilon) break;
-          tRay += d;
-          if(tRay > maxDistance) break;
-        }
-
-        vec3 col = vec3(0.0);
-        if(tRay < maxDistance){
-          vec3 pos = ro + rd * tRay;
-          vec3 n = calcNormal(pos);
-          vec3 L = normalize(lightPos - pos);
-          float diff = max(dot(n, L), 0.0);
-          float spec = pow(max(dot(reflect(-L, n), normalize(-rd)), 0.0), 32.0);
-          // subtle fresnel for edge glow
-          float fres = pow(1.0 - max(dot(normalize(-rd), n), 0.0), 3.0);
-          vec3 base = mix(colorA, colorB, 0.5 + 0.5 * sin(length(pos.xy) * 0.005 + time * 0.8));
-          col = base * (0.15 + 0.85 * diff) + spec * vec3(1.0) + fres * mix(vec3(1.0), base, 0.5) * 0.3;
-          gl_FragColor = vec4(col, 1.0);
-          } else {
-          // sky: when gradient enabled we'll make sky transparent so CSS gradient shows through;
-          // when gradient is disabled, use the bgColor uniform controlled by the background controller
-          if(useGradient > 0.5){
-            col = mix(colorA, colorB, 0.5 + 0.5 * rd.y);
-            gl_FragColor = vec4(col, 0.0);
-          } else {
-            col = bgColor;
-            gl_FragColor = vec4(col, 1.0);
+    // If modular pattern factories are available, prefer them (they receive runtime context).
+    try{
+      if(patternModules && patternModules.patternFactories && patternModules.patternFactories[p]){
+        const beforeLen = group.children.length;
+        patternModules.patternFactories[p]({ group, params, camera, container, THREE });
+        // validate any newly-added children for NaN in their position arrays
+        let afterLen = group.children.length;
+        for(let ci = beforeLen; ci < afterLen; ci++){
+          const child = group.children[ci];
+          if(child && child.geometry){
+            if(!validateGeometry(child.geometry, p)){
+              console.error('Removed child with invalid geometry for pattern', p, 'childIndex', ci);
+              try{ if(child.geometry) child.geometry.dispose(); }catch(e){}
+              try{ if(child.material) child.material.dispose(); }catch(e){}
+              group.remove(child);
+              // adjust indices because we removed the child
+              ci--; afterLen--;
+            }
           }
         }
+        return;
       }
-    `;
+    }catch(e){ /* ignore and fallback to inline factories */ }
 
-    const vert = `
-      varying vec2 vUv;
-      void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }
-    `;
-
-    const mat = new THREE.ShaderMaterial({
-      vertexShader: vert,
-      fragmentShader: frag,
-      uniforms: {
-        time: { value: 0 },
-        resolution: { value: new THREE.Vector2(container.clientWidth, container.clientHeight) },
-        steps: { value: params.raymarchSteps },
-        maxDistance: { value: params.raymarchMaxDistance },
-        epsilon: { value: params.raymarchEpsilon },
-        lightPos: { value: new THREE.Vector3(params.raymarchLightX, params.raymarchLightY, params.raymarchLightZ) },
-        colorA: { value: new THREE.Color(params.colorA) },
-        colorB: { value: new THREE.Color(params.colorB) },
-        bgColor: { value: new THREE.Color(params.background) },
-        sphereModAmp: { value: params.raySphereModAmp },
-        sphereModFreq: { value: params.raySphereModFreq },
-        noiseScale: { value: params.rayNoiseScale },
-        noiseSpeed: { value: params.rayNoiseSpeed },
-        noiseIntensity: { value: params.rayNoiseIntensity }
-      ,
-        useGradient: { value: params.gradient ? 1.0 : 0.0 }
-      },
-      transparent: true,
-      side: THREE.DoubleSide
-    });
-
-    const mesh = new THREE.Mesh(geom, mat);
-    mesh.scale.set(1000,1000,1);
-    mesh.userData.type = 'Raymarching';
-    mesh.position.set(0,0,-300);
-    group.add(mesh);
-  }
-
-  // Layered Parallax removed (cleaned up)
-
-  function createWireframeTerrain(){
-    // Subdivided plane geometry used as a wireframe terrain
-    const width = Math.min(1600, params.spread * 2);
-    const height = Math.min(900, params.spread * 1.2);
-    const segX = Math.max(2, Math.floor(params.terrainSegmentsX));
-    const segY = Math.max(2, Math.floor(params.terrainSegmentsY));
-    const geom = new THREE.PlaneGeometry(width, height, segX, segY);
-
-    // make position attribute dynamic for per-frame updates
-    if(geom.attributes && geom.attributes.position && typeof geom.attributes.position.setUsage === 'function'){
-      try{ geom.attributes.position.setUsage(THREE.DynamicDrawUsage); }catch(e){}
+    // if there's an inline factory (legacy), call it; otherwise modules should have handled creation
+    if(patternFactories[p]){
+      try{ patternFactories[p](); }catch(e){ console.warn('pattern factory failed', e); }
     }
-
-    // store base positions for CPU-side displacement
-    const basePos = new Float32Array(geom.attributes.position.array.slice());
-    geom.setAttribute('basePos', new THREE.BufferAttribute(basePos.slice(), 3));
-
-    const mat = new THREE.MeshBasicMaterial({ color: new THREE.Color(params.colorA), wireframe: !!params.terrainWireframe, side: THREE.DoubleSide });
-    const mesh = new THREE.Mesh(geom, mat);
-    // tilt the plane so the camera sees the wireframe as terrain
-    mesh.rotation.x = -0.6;
-    mesh.position.set(0, -80, 0);
-    mesh.userData.type = 'Wireframe Terrain';
-    mesh.userData.basePos = basePos;
-    mesh.userData.segX = segX; mesh.userData.segY = segY;
-    group.add(mesh);
   }
+  
+  // Inline factories removed — pattern modules supply implementations now.
 
   function updatePattern(delta){
     const time = clock.getElapsedTime();
+    // small global swirl amount used by some particle patterns
+    const globalSwirl = Math.sin(time * 0.08) * params.swirlIntensity;
     // compute frustum size for wrapping
     const frustumHeight = 2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2) * camera.position.z;
     const frustumWidth = frustumHeight * camera.aspect;
@@ -610,7 +199,16 @@ import GUI from 'https://cdn.jsdelivr.net/npm/lil-gui@0.18/dist/lil-gui.esm.min.
         const pos = geo.attributes.position;
         const cols = geo.attributes.color;
         const cx = child.userData.cx, cy = child.userData.cy, radius = child.userData.radius, angleArr = child.userData.angle, angVel = child.userData.angVel, spiral = child.userData.spiral;
-        const globalSwirl = params.swirlIntensity * 0.08 * Math.sin(time * 0.07);
+          pos.needsUpdate = true;
+          if(!validateGeometry(geo, type)){
+            const fixes = sanitizeGeometry(geo, type, child);
+            if(fixes === 0){ 
+              console.error('Wireframe Terrain geometry invalid and not repairable; removing child.'); 
+              try{ if(child.geometry) child.geometry.dispose(); }catch(e){} 
+              try{ if(child.material) child.material.dispose(); }catch(e){} 
+              group.remove(child); 
+            }
+          }
         for(let i=0;i<pos.count;i++){
           const i3 = i*3;
           angleArr[i] += angVel[i] * params.circularSpeed * delta * 0.8;
