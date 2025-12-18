@@ -30,11 +30,6 @@ import GUI from 'https://cdn.jsdelivr.net/npm/lil-gui@0.18/dist/lil-gui.esm.min.
     shaderDistortion: 1.6,
     shaderSpeed: 1.0
     ,
-    // gradient noise plane params
-    gradientNoiseScale: 2.5,
-    gradientNoiseSpeed: 0.6,
-    gradientNoiseIntensity: 1.0
-    ,
     // wireframe terrain params
     terrainSegmentsX: 200,
     terrainSegmentsY: 100,
@@ -43,12 +38,9 @@ import GUI from 'https://cdn.jsdelivr.net/npm/lil-gui@0.18/dist/lil-gui.esm.min.
     terrainSpeed: 0.9,
     terrainWireframe: true
     ,
-    // layered parallax planes
-    layeredCount: 6,
-    layerSpacing: 120,
-    parallaxIntensity: 1.0,
-    layerScale: 1.0
-    ,
+    
+    // layered parallax planes (removed)
+    
     // raymarching shader params
     raymarchSteps: 80,
     raymarchMaxDistance: 2000,
@@ -120,9 +112,7 @@ import GUI from 'https://cdn.jsdelivr.net/npm/lil-gui@0.18/dist/lil-gui.esm.min.
     else if(p === 'Fireflies') createFireflies();
     else if(p === 'Waves') createWaves();
     else if(p === 'Distorting Plane') createDistortingPlane();
-    else if(p === 'Gradient Noise Plane') createGradientNoisePlane();
     else if(p === 'Wireframe Terrain') createWireframeTerrain();
-    else if(p === 'Layered Parallax') createLayeredParallaxPlanes();
     else if(p === 'Raymarching') createRaymarching();
     else createVortex();
   }
@@ -423,76 +413,7 @@ import GUI from 'https://cdn.jsdelivr.net/npm/lil-gui@0.18/dist/lil-gui.esm.min.
     group.add(mesh);
   }
 
-  function createGradientNoisePlane(){
-    // Full-screen procedural gradient driven by animated noise in the fragment shader
-    const geom = new THREE.PlaneGeometry(2,2, 1,1);
-    const frag = `
-      precision highp float;
-      uniform float time;
-      uniform float noiseScale;
-      uniform float noiseSpeed;
-      uniform float noiseIntensity;
-      uniform vec3 colorA;
-      uniform vec3 colorB;
-      varying vec2 vUv;
-
-      // Simple value-noise / fbm (iq-style)
-      vec2 hash(vec2 p){ p = vec2(dot(p,vec2(127.1,311.7)), dot(p,vec2(269.5,183.3))); return -1.0 + 2.0*fract(sin(p)*43758.5453123); }
-      float noise(vec2 p){
-        vec2 i = floor(p);
-        vec2 f = fract(p);
-        vec2 u = f*f*(3.0-2.0*f);
-        float a = dot(hash(i + vec2(0.0,0.0)), f - vec2(0.0,0.0));
-        float b = dot(hash(i + vec2(1.0,0.0)), f - vec2(1.0,0.0));
-        float c = dot(hash(i + vec2(0.0,1.0)), f - vec2(0.0,1.0));
-        float d = dot(hash(i + vec2(1.0,1.0)), f - vec2(1.0,1.0));
-        return mix(mix(a,b,u.x), mix(c,d,u.x), u.y);
-      }
-      float fbm(vec2 p){
-        float v = 0.0; float a = 0.5;
-        for(int i=0;i<5;i++){ v += a * noise(p); p *= 2.0; a *= 0.5; }
-        return v;
-      }
-
-      void main(){
-        vec2 p = (vUv - 0.5) * noiseScale * vec2(1.0, 1.0);
-        float t = time * noiseSpeed;
-        float n = fbm(p + vec2(t * 0.2, -t * 0.15));
-        // normalize to 0..1
-        n = smoothstep(-0.3, 0.7, n) * noiseIntensity;
-        // build a layered gradient
-        float g = smoothstep(0.0, 1.0, vUv.y + (n * 0.3));
-        vec3 col = mix(colorA, colorB, g);
-        gl_FragColor = vec4(col, 1.0);
-      }
-    `;
-
-    const vert = `
-      varying vec2 vUv;
-      void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }
-    `;
-
-    const mat = new THREE.ShaderMaterial({
-      vertexShader: vert,
-      fragmentShader: frag,
-      uniforms: {
-        time: { value: 0 },
-        noiseScale: { value: params.gradientNoiseScale },
-        noiseSpeed: { value: params.gradientNoiseSpeed },
-        noiseIntensity: { value: params.gradientNoiseIntensity },
-        colorA: { value: new THREE.Color(params.colorA) },
-        colorB: { value: new THREE.Color(params.colorB) }
-      },
-      side: THREE.DoubleSide,
-      transparent: false
-    });
-
-    const mesh = new THREE.Mesh(geom, mat);
-    mesh.scale.set(1000,1000,1);
-    mesh.userData.type = 'Gradient Noise Plane';
-    mesh.position.set(0,0,-400);
-    group.add(mesh);
-  }
+  // Gradient Noise Plane removed
 
   function createRaymarching(){
     // Fullscreen raymarching quad (screen-space SDF raymarch)
@@ -626,40 +547,7 @@ import GUI from 'https://cdn.jsdelivr.net/npm/lil-gui@0.18/dist/lil-gui.esm.min.
     group.add(mesh);
   }
 
-  function createLayeredParallaxPlanes(){
-    const layers = Math.max(1, Math.floor(params.layeredCount));
-    const spacing = params.layerSpacing;
-    const baseWidth = Math.min(1600, params.spread * 2);
-    const baseHeight = Math.min(900, params.spread * 1.2);
-
-    const layerGroup = new THREE.Group();
-    layerGroup.userData.type = 'Layered Parallax';
-    layerGroup.userData.planes = [];
-
-    const colorA = new THREE.Color(params.colorA);
-    const colorB = new THREE.Color(params.colorB);
-
-    for(let i=0;i<layers;i++){
-      const t = i / Math.max(1, layers - 1);
-      const w = baseWidth * Math.pow(params.layerScale, i);
-      const h = baseHeight * Math.pow(params.layerScale, i);
-      const geom = new THREE.PlaneGeometry(w, h, 1, 1);
-      const col = colorA.clone().lerp(colorB, t);
-      const mat = new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: 0.9 - t * 0.6, depthTest: true });
-      const mesh = new THREE.Mesh(geom, mat);
-      mesh.position.z = -i * spacing - 100;
-      mesh.userData.index = i;
-      mesh.userData.layerT = t;
-      mesh.userData.baseX = 0;
-      mesh.userData.baseY = -30 + i * 6;
-      mesh.position.x = mesh.userData.baseX;
-      mesh.position.y = mesh.userData.baseY;
-      layerGroup.add(mesh);
-      layerGroup.userData.planes.push(mesh);
-    }
-
-    group.add(layerGroup);
-  }
+  // Layered Parallax removed
 
   function createWireframeTerrain(){
     // Subdivided plane geometry used as a wireframe terrain
@@ -808,18 +696,6 @@ import GUI from 'https://cdn.jsdelivr.net/npm/lil-gui@0.18/dist/lil-gui.esm.min.
         pos.needsUpdate = true;
         // update wireframe toggle dynamically
         if(child.material) child.material.wireframe = !!params.terrainWireframe;
-      } else if(type === 'Layered Parallax'){
-        // child is a group containing plane meshes
-        const planes = child.userData.planes || [];
-        for(let i=0;i<planes.length;i++){
-          const m = planes[i];
-          const idx = m.userData.index || i;
-          const speedFactor = 0.2 + idx * 0.06;
-          const intensity = params.parallaxIntensity;
-          // simple oscillation with depth-based amplitude
-          m.position.x = m.userData.baseX + Math.sin(time * speedFactor + idx * 0.4) * intensity * (idx+1) * 8;
-          m.position.y = m.userData.baseY + Math.cos(time * (speedFactor*0.7) - idx*0.2) * intensity * (idx+1) * 2;
-        }
       }
       // Update shader uniforms if present on this child
       if(child.material && child.material.uniforms){
@@ -829,10 +705,7 @@ import GUI from 'https://cdn.jsdelivr.net/npm/lil-gui@0.18/dist/lil-gui.esm.min.
         if(u.speed && 'shaderSpeed' in params) u.speed.value = params.shaderSpeed;
         if(u.colorA) u.colorA.value = new THREE.Color(params.colorA);
         if(u.colorB) u.colorB.value = new THREE.Color(params.colorB);
-        // gradient noise uniforms
-        if(u.noiseScale && 'gradientNoiseScale' in params) u.noiseScale.value = params.gradientNoiseScale;
-        if(u.noiseSpeed && 'gradientNoiseSpeed' in params) u.noiseSpeed.value = params.gradientNoiseSpeed;
-        if(u.noiseIntensity && 'gradientNoiseIntensity' in params) u.noiseIntensity.value = params.gradientNoiseIntensity;
+        // gradient noise uniforms (removed - gradient-noise plane deleted)
         // raymarch uniforms
         if(u.resolution && typeof u.resolution.value !== 'undefined') u.resolution.value.set(container.clientWidth, container.clientHeight);
         if(u.steps) u.steps.value = params.raymarchSteps;
@@ -899,67 +772,99 @@ import GUI from 'https://cdn.jsdelivr.net/npm/lil-gui@0.18/dist/lil-gui.esm.min.
   function setupGUI(){
     const gui = new GUI({ container: document.getElementById('controls'), width:300 });
 
-    gui.add(params, 'pattern', ['Vortex','Flow Field','Lissajous','Fireflies','Waves','Distorting Plane','Gradient Noise Plane','Wireframe Terrain','Layered Parallax','Raymarching']).onChange(()=>{ buildPattern(); });
-    gui.addColor(params, 'colorA').onChange(()=> rebuildColors());
-    gui.addColor(params, 'colorB').onChange(()=> rebuildColors());
-    gui.add(params, 'motion', ['swirl','float','burst']).name('Motion');
-    gui.add(params, 'colorSpeed', 0.0, 3.0, 0.01).name('Color Speed');
-    gui.add(params, 'centers', 1, 8, 1).name('Swirl Centers').onChange(()=> buildPattern());
-    gui.add(params, 'circularSpeed', 0.0, 4.0, 0.01).name('Circular Speed');
-    gui.add(params, 'swirlIntensity', 0.0, 3.0, 0.01).name('Swirl Intensity');
-    gui.add(params, 'radialWobble', 0.0, 2.0, 0.01).name('Radial Wobble');
-    gui.add(params, 'count', 100, 4000, 1).onChange(()=> buildPattern());
-    gui.add(params, 'size', 0.5, 20, 0.1).onChange(()=> { rebuildSizes(); });
-    gui.add(params, 'speed', 0.1, 3, 0.05);
-    gui.add(params, 'spread', 100, 2000, 1).onChange(()=> buildPattern());
-    gui.addColor(params, 'background').onChange(v => {
-      // if gradient is off, set renderer clear color and container background
-      if(!params.gradient){
-        renderer.setClearColor(new THREE.Color(v), 1);
-        container.style.background = v;
-      } else {
-        // when gradient is on we keep renderer transparent and update gradient
-        updateBackgroundGradient();
-      }
+    // keep references to controllers so we can show/hide by pattern
+    const controllers = {};
+    controllers.pattern = gui.add(params, 'pattern', ['Vortex','Flow Field','Lissajous','Fireflies','Waves','Distorting Plane','Wireframe Terrain','Raymarching']).onChange(()=>{ buildPattern(); updateGUIForPattern(); });
+    controllers.colorA = gui.addColor(params, 'colorA').onChange(()=> rebuildColors());
+    controllers.colorB = gui.addColor(params, 'colorB').onChange(()=> rebuildColors());
+    controllers.motion = gui.add(params, 'motion', ['swirl','float','burst']).name('Motion');
+    controllers.colorSpeed = gui.add(params, 'colorSpeed', 0.0, 3.0, 0.01).name('Color Speed');
+    controllers.centers = gui.add(params, 'centers', 1, 8, 1).name('Swirl Centers').onChange(()=> buildPattern());
+    controllers.circularSpeed = gui.add(params, 'circularSpeed', 0.0, 4.0, 0.01).name('Circular Speed');
+    controllers.swirlIntensity = gui.add(params, 'swirlIntensity', 0.0, 3.0, 0.01).name('Swirl Intensity');
+    controllers.radialWobble = gui.add(params, 'radialWobble', 0.0, 2.0, 0.01).name('Radial Wobble');
+    controllers.count = gui.add(params, 'count', 100, 4000, 1).onChange(()=> buildPattern());
+    controllers.size = gui.add(params, 'size', 0.5, 20, 0.1).onChange(()=> { rebuildSizes(); });
+    controllers.speed = gui.add(params, 'speed', 0.1, 3, 0.05);
+    controllers.spread = gui.add(params, 'spread', 100, 2000, 1).onChange(()=> buildPattern());
+    controllers.background = gui.addColor(params, 'background').onChange(v => {
+      if(!params.gradient){ renderer.setClearColor(new THREE.Color(v), 1); container.style.background = v; }
+      else updateBackgroundGradient();
     });
-    gui.add(params, 'gradient').name('Gradient BG').onChange(v => {
-      if(!v){
-        // disable gradient: make canvas opaque with chosen background
-        container.style.background = params.background;
-        renderer.setClearColor(new THREE.Color(params.background), 1);
-      } else {
-        // enable gradient: make canvas transparent so CSS shows through
-        renderer.setClearColor(0x000000, 0);
-        updateBackgroundGradient();
-      }
+    controllers.gradient = gui.add(params, 'gradient').name('Gradient BG').onChange(v => {
+      if(!v){ container.style.background = params.background; renderer.setClearColor(new THREE.Color(params.background), 1); }
+      else { renderer.setClearColor(0x000000, 0); updateBackgroundGradient(); }
     });
-    gui.add(params, 'gradientAngle', 0, 360, 1).name('Gradient Angle').onChange(()=> updateBackgroundGradient());
-
-    // Gradient Noise Plane controls
-    gui.add(params, 'gradientNoiseScale', 0.2, 10.0, 0.1).name('Noise Scale');
-    gui.add(params, 'gradientNoiseSpeed', 0.0, 4.0, 0.01).name('Noise Speed');
-    gui.add(params, 'gradientNoiseIntensity', 0.0, 4.0, 0.01).name('Noise Intensity');
+    controllers.gradientAngle = gui.add(params, 'gradientAngle', 0, 360, 1).name('Gradient Angle').onChange(()=> updateBackgroundGradient());
 
     // Wireframe Terrain controls
-    gui.add(params, 'terrainSegmentsX', 8, 600, 1).name('Terrain Seg X').onChange(()=> buildPattern());
-    gui.add(params, 'terrainSegmentsY', 4, 400, 1).name('Terrain Seg Y').onChange(()=> buildPattern());
-    gui.add(params, 'terrainScale', 0.2, 6.0, 0.05).name('Terrain Scale');
-    gui.add(params, 'terrainHeight', 0, 600, 1).name('Terrain Height');
-    gui.add(params, 'terrainSpeed', 0.0, 4.0, 0.01).name('Terrain Speed');
-    gui.add(params, 'terrainWireframe').name('Wireframe');
+    controllers.terrainSegmentsX = gui.add(params, 'terrainSegmentsX', 8, 600, 1).name('Terrain Seg X').onChange(()=> buildPattern());
+    controllers.terrainSegmentsY = gui.add(params, 'terrainSegmentsY', 4, 400, 1).name('Terrain Seg Y').onChange(()=> buildPattern());
+    controllers.terrainScale = gui.add(params, 'terrainScale', 0.2, 6.0, 0.05).name('Terrain Scale');
+    controllers.terrainHeight = gui.add(params, 'terrainHeight', 0, 600, 1).name('Terrain Height');
+    controllers.terrainSpeed = gui.add(params, 'terrainSpeed', 0.0, 4.0, 0.01).name('Terrain Speed');
+    controllers.terrainWireframe = gui.add(params, 'terrainWireframe').name('Wireframe');
+
+    // Layered Parallax controls (removed)
 
     // Raymarching controls
-    gui.add(params, 'raymarchSteps', 8, 256, 1).name('Raymarch Steps');
-    gui.add(params, 'raymarchMaxDistance', 100, 5000, 1).name('Raymarch MaxDist');
-    gui.add(params, 'raymarchEpsilon', 0.0001, 0.01, 0.0001).name('Raymarch Eps');
-    gui.add(params, 'raymarchLightX', -2000, 2000, 1).name('Light X');
-    gui.add(params, 'raymarchLightY', -2000, 2000, 1).name('Light Y');
-    gui.add(params, 'raymarchLightZ', -2000, 2000, 1).name('Light Z');
-    gui.add(params, 'raySphereModAmp', 0.0, 300.0, 1.0).name('Sphere Mod Amp');
-    gui.add(params, 'raySphereModFreq', 0.0, 8.0, 0.01).name('Sphere Mod Freq');
-    gui.add(params, 'rayNoiseScale', 0.05, 4.0, 0.01).name('Ray Noise Scale');
-    gui.add(params, 'rayNoiseSpeed', 0.0, 4.0, 0.01).name('Ray Noise Speed');
-    gui.add(params, 'rayNoiseIntensity', 0.0, 4.0, 0.01).name('Ray Noise Int');
+    controllers.raymarchSteps = gui.add(params, 'raymarchSteps', 8, 256, 1).name('Raymarch Steps');
+    controllers.raymarchMaxDistance = gui.add(params, 'raymarchMaxDistance', 100, 5000, 1).name('Raymarch MaxDist');
+    controllers.raymarchEpsilon = gui.add(params, 'raymarchEpsilon', 0.0001, 0.01, 0.0001).name('Raymarch Eps');
+    controllers.raymarchLightX = gui.add(params, 'raymarchLightX', -2000, 2000, 1).name('Light X');
+    controllers.raymarchLightY = gui.add(params, 'raymarchLightY', -2000, 2000, 1).name('Light Y');
+    controllers.raymarchLightZ = gui.add(params, 'raymarchLightZ', -2000, 2000, 1).name('Light Z');
+    controllers.raySphereModAmp = gui.add(params, 'raySphereModAmp', 0.0, 300.0, 1.0).name('Sphere Mod Amp');
+    controllers.raySphereModFreq = gui.add(params, 'raySphereModFreq', 0.0, 8.0, 0.01).name('Sphere Mod Freq');
+    controllers.rayNoiseScale = gui.add(params, 'rayNoiseScale', 0.05, 4.0, 0.01).name('Ray Noise Scale');
+    controllers.rayNoiseSpeed = gui.add(params, 'rayNoiseSpeed', 0.0, 4.0, 0.01).name('Ray Noise Speed');
+    controllers.rayNoiseIntensity = gui.add(params, 'rayNoiseIntensity', 0.0, 4.0, 0.01).name('Ray Noise Int');
+
+    // expose controllers store on gui for later access
+    gui._controllers = controllers;
+
+    // helper: show/hide controllers based on selected pattern
+    function updateGUIForPattern(){
+      const c = gui._controllers;
+      const p = params.pattern;
+      // helper to hide all optional controllers first
+      const optional = ['centers','circularSpeed','swirlIntensity','radialWobble','count','size','speed','spread','terrainSegmentsX','terrainSegmentsY','terrainScale','terrainHeight','terrainSpeed','terrainWireframe','raymarchSteps','raymarchMaxDistance','raymarchEpsilon','raymarchLightX','raymarchLightY','raymarchLightZ','raySphereModAmp','raySphereModFreq','rayNoiseScale','rayNoiseSpeed','rayNoiseIntensity'];
+      optional.forEach(k => { if(c[k] && c[k].hide) c[k].hide(); });
+
+      // show common controls
+      if(c.colorA && c.colorA.show) c.colorA.show();
+      if(c.colorB && c.colorB.show) c.colorB.show();
+      if(c.gradient && c.gradient.show) c.gradient.show();
+      if(c.gradientAngle && c.gradientAngle.show) c.gradientAngle.show();
+
+      // Particle-like patterns
+      if(['Vortex','Flow Field','Lissajous','Fireflies'].includes(p)){
+        ['centers','circularSpeed','swirlIntensity','radialWobble','count','size','speed','spread','motion','colorSpeed'].forEach(k=>{ if(c[k] && c[k].show) c[k].show(); });
+      }
+
+      // Waves / Distorting Plane
+      if(p === 'Waves'){
+        if(c.size && c.size.show) c.size.show();
+      }
+      if(p === 'Distorting Plane'){
+        if(c.size && c.size.show) c.size.show();
+      }
+
+      // Wireframe Terrain
+      if(p === 'Wireframe Terrain'){
+        ['terrainSegmentsX','terrainSegmentsY','terrainScale','terrainHeight','terrainSpeed','terrainWireframe'].forEach(k=>{ if(c[k] && c[k].show) c[k].show(); });
+      }
+
+      // Layered Parallax (removed)
+
+      // Raymarching
+      if(p === 'Raymarching'){
+        ['raymarchSteps','raymarchMaxDistance','raymarchEpsilon','raymarchLightX','raymarchLightY','raymarchLightZ','raySphereModAmp','raySphereModFreq','rayNoiseScale','rayNoiseSpeed','rayNoiseIntensity'].forEach(k=>{ if(c[k] && c[k].show) c[k].show(); });
+      }
+    }
+
+    // call once to set initial visibility
+    updateGUIForPattern();
 
     document.getElementById('download-html').addEventListener('click', () => {
       const html = generateStandaloneHTML();
