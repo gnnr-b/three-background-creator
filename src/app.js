@@ -15,7 +15,11 @@
     size: 3,
     speed: 1.0,
     spread: 600,
-    background: '#0b0b0b'
+    background: '#0b0b0b',
+    motion: 'swirl', // 'swirl' | 'float' | 'burst'
+    colorSpeed: 0.6,
+    gradient: true,
+    gradientAngle: 135
   };
 
   function init() {
@@ -63,7 +67,6 @@
     clearGroup();
     const p = params.pattern;
     if(p === 'Particles') createParticles();
-    else if(p === 'Rings') createRings();
     else if(p === 'Waves') createWaves();
     else createParticles();
   }
@@ -72,8 +75,13 @@
     const geometry = new THREE.BufferGeometry();
     const positions = new Float32Array(params.count * 3);
     const colors = new Float32Array(params.count * 3);
+    const baseColors = new Float32Array(params.count * 3);
     const colorA = new THREE.Color(params.colorA);
     const colorB = new THREE.Color(params.colorB);
+
+    // per-particle motion data stored on the points object
+    const velocities = new Float32Array(params.count * 3);
+    const offsets = new Float32Array(params.count);
 
     for(let i=0;i<params.count;i++){
       const i3 = i*3;
@@ -84,44 +92,27 @@
       const t = Math.random();
       const c = colorA.clone().lerp(colorB, t);
       colors[i3+0] = c.r; colors[i3+1] = c.g; colors[i3+2] = c.b;
+      baseColors[i3+0] = c.r; baseColors[i3+1] = c.g; baseColors[i3+2] = c.b;
+
+      velocities[i3+0] = (Math.random()-0.5) * 6.0;
+      velocities[i3+1] = (Math.random()-0.5) * 2.5;
+      velocities[i3+2] = (Math.random()-0.5) * 1.0;
+      offsets[i] = Math.random() * Math.PI * 2;
     }
 
     geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
     geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    geometry.setAttribute('baseColor', new THREE.BufferAttribute(baseColors, 3));
 
     const material = new THREE.PointsMaterial({ size: params.size, vertexColors: true, depthWrite:false, transparent:true, opacity:0.95 });
     const points = new THREE.Points(geometry, material);
     points.userData.type = 'Particles';
+    points.userData.velocities = velocities;
+    points.userData.offsets = offsets;
     group.add(points);
   }
 
-  function createRings(){
-    const geometry = new THREE.BufferGeometry();
-    const count = params.count;
-    const positions = new Float32Array(count * 3);
-    const colors = new Float32Array(count * 3);
-    const colorA = new THREE.Color(params.colorA);
-    const colorB = new THREE.Color(params.colorB);
-
-    for(let i=0;i<count;i++){
-      const a = Math.random() * Math.PI * 2;
-      const r = 80 + Math.random()*params.spread*0.8;
-      const i3 = i*3;
-      positions[i3+0] = Math.cos(a) * r;
-      positions[i3+1] = Math.sin(a) * r * 0.6;
-      positions[i3+2] = (Math.random()-0.5) * 40;
-      const t = i / count;
-      const c = colorA.clone().lerp(colorB, t);
-      colors[i3+0] = c.r; colors[i3+1] = c.g; colors[i3+2] = c.b;
-    }
-
-    geometry.setAttribute('position', new THREE.BufferAttribute(positions,3));
-    geometry.setAttribute('color', new THREE.BufferAttribute(colors,3));
-    const mat = new THREE.PointsMaterial({ size: params.size*1.4, vertexColors:true, transparent:true, opacity:0.95 });
-    const pts = new THREE.Points(geometry, mat);
-    pts.userData.type = 'Rings';
-    group.add(pts);
-  }
+  
 
   function createWaves(){
     const width = Math.min(1400, params.spread*2);
@@ -144,25 +135,93 @@
     const mesh = new THREE.Mesh(geometry, mat);
     mesh.rotation.x = -0.5;
     mesh.userData.type = 'Waves';
+    // store base positions for richer displacement later
+    mesh.userData.basePos = geometry.attributes.position.array.slice();
     group.add(mesh);
   }
 
   function updatePattern(delta){
     group.children.forEach(child => {
-      if(child.userData.type === 'Particles' || child.userData.type === 'Rings'){
-        child.rotation.y += 0.02 * params.speed * delta;
-        child.position.y = Math.sin(clock.getElapsedTime() * 0.4 * params.speed) * 20;
+      if(child.userData.type === 'Particles'){
+        // per-particle velocity + global motion modes
+        const geo = child.geometry;
+        const pos = geo.attributes.position;
+        const base = geo.attributes.baseColor;
+        const cols = geo.attributes.color;
+        const vels = child.userData.velocities;
+        const offs = child.userData.offsets;
+        const time = clock.getElapsedTime();
+        for(let i=0;i<pos.count;i++){
+          const i3 = i*3;
+          // apply motion modes
+          if(params.motion === 'swirl'){
+            const angle = (time * 0.2 + offs[i]) * (0.5 + (vels[i3]*0.01));
+            pos.array[i3+0] += Math.cos(angle) * 0.6 * params.speed * delta;
+            pos.array[i3+1] += Math.sin(angle) * 0.35 * params.speed * delta;
+          } else if(params.motion === 'float'){
+            pos.array[i3+0] += Math.sin(time*0.5 + offs[i]) * 0.2 * params.speed * delta;
+            pos.array[i3+1] += Math.cos(time*0.4 + offs[i]) * 0.15 * params.speed * delta;
+          } else if(params.motion === 'burst'){
+            pos.array[i3+0] += vels[i3+0] * 0.02 * params.speed * delta;
+            pos.array[i3+1] += vels[i3+1] * 0.02 * params.speed * delta;
+            pos.array[i3+2] += vels[i3+2] * 0.01 * params.speed * delta;
+          }
+
+          // slow return to center for stability
+          pos.array[i3+0] *= 0.9999;
+          pos.array[i3+1] *= 0.9999;
+
+          // color cycling using baseColor + small H offset
+          const baseR = base.array[i3+0], baseG = base.array[i3+1], baseB = base.array[i3+2];
+          const c = new THREE.Color(baseR, baseG, baseB);
+          c.offsetHSL(Math.sin(time * params.colorSpeed + offs[i]) * 0.08, 0, 0);
+          cols.array[i3+0] = c.r; cols.array[i3+1] = c.g; cols.array[i3+2] = c.b;
+        }
+        pos.needsUpdate = true; if(geo.attributes.color) geo.attributes.color.needsUpdate = true;
+        child.rotation.y += 0.01 * params.speed * delta;
+        child.position.y = Math.sin(time * 0.4 * params.speed) * 20;
+      }
+      if(child.userData.type === 'Rings'){
+        // rotate rings and slowly expand/contract
+        const geo = child.geometry;
+        const pos = geo.attributes.position;
+        const speeds = child.userData.speeds;
+        const time = clock.getElapsedTime();
+        for(let i=0;i<pos.count;i++){
+          const i3 = i*3;
+          const s = speeds[i];
+          const ang = Math.atan2(pos.array[i3+1], pos.array[i3+0]) + 0.001 * s * params.speed;
+          const r = Math.hypot(pos.array[i3+0], pos.array[i3+1]);
+          const nr = r + Math.sin(time*0.3*s)*0.4;
+          pos.array[i3+0] = Math.cos(ang) * nr;
+          pos.array[i3+1] = Math.sin(ang) * nr * 0.6;
+        }
+        pos.needsUpdate = true;
+        child.rotation.z += 0.002 * params.speed * delta;
       }
       if(child.userData.type === 'Waves'){
         const geo = child.geometry;
         const pos = geo.attributes.position;
+        const basePos = child.userData.basePos;
+        const time = clock.getElapsedTime();
         for(let i=0;i<pos.count;i++){
           const ix = i*3;
-          pos.array[ix+2] = Math.sin((i + clock.getElapsedTime()*50*params.speed) * 0.02) * 12;
+          // use base position and add layered sine waves for richer motion
+          const bx = basePos[ix+0], by = basePos[ix+1];
+          pos.array[ix+2] = Math.sin((bx + time*40) * 0.008) * 18 + Math.cos((i + time*30) * 0.02) * 6;
         }
         pos.needsUpdate = true;
       }
     });
+
+    // animated gradient background
+    if(params.gradient) updateBackgroundGradient();
+  }
+
+  function updateBackgroundGradient(){
+    const t = clock.getElapsedTime();
+    const angle = (params.gradientAngle + Math.sin(t*0.05)*8).toFixed(2);
+    container.style.background = `linear-gradient(${angle}deg, ${params.colorA}, ${params.colorB})`;
   }
 
   function animate(){
@@ -177,14 +236,18 @@
     document.getElementById('controls').innerHTML = '';
     document.getElementById('controls').appendChild(gui.domElement);
 
-    gui.add(params, 'pattern', ['Particles','Rings','Waves']).onChange(()=>{ buildPattern(); });
+    gui.add(params, 'pattern', ['Particles','Waves']).onChange(()=>{ buildPattern(); });
     gui.addColor(params, 'colorA').onChange(()=> rebuildColors());
     gui.addColor(params, 'colorB').onChange(()=> rebuildColors());
+    gui.add(params, 'motion', ['swirl','float','burst']).name('Motion');
+    gui.add(params, 'colorSpeed', 0.0, 3.0, 0.01).name('Color Speed');
     gui.add(params, 'count', 100, 4000, 1).onChange(()=> buildPattern());
     gui.add(params, 'size', 0.5, 20, 0.1).onChange(()=> { rebuildSizes(); });
     gui.add(params, 'speed', 0.1, 3, 0.05);
     gui.add(params, 'spread', 100, 2000, 1).onChange(()=> buildPattern());
     gui.addColor(params, 'background').onChange(v => { renderer.setClearColor(new THREE.Color(v)); });
+    gui.add(params, 'gradient').name('Gradient BG').onChange(v => { if(!v) container.style.background = params.background; else updateBackgroundGradient(); });
+    gui.add(params, 'gradientAngle', 0, 360, 1).name('Gradient Angle').onChange(()=> updateBackgroundGradient());
 
     // Hook up download button
     document.getElementById('download-html').addEventListener('click', () => {
@@ -265,14 +328,7 @@
           const mat = new THREE.PointsMaterial({size:params.size, vertexColors:true, transparent:true});
           const pts = new THREE.Points(geo, mat); pts.userData='p'; group.add(pts);
         }
-        if(params.pattern==='Rings'){
-          const geo = new THREE.BufferGeometry(); const positions=new Float32Array(params.count*3); const colors=new Float32Array(params.count*3);
-          const a = new THREE.Color(params.colorA), b = new THREE.Color(params.colorB);
-          for(let i=0;i<params.count;i++){const i3=i*3; const ang=Math.random()*Math.PI*2; const r=80+Math.random()*params.spread*0.8; positions[i3]=Math.cos(ang)*r; positions[i3+1]=Math.sin(ang)*r*0.6; positions[i3+2]=(Math.random()-0.5)*40; const t=i/params.count; const c=a.clone().lerp(b,t); colors[i3]=c.r; colors[i3+1]=c.g; colors[i3+2]=c.b;}
-          geo.setAttribute('position', new THREE.BufferAttribute(positions,3)); geo.setAttribute('color', new THREE.BufferAttribute(colors,3));
-          const mat = new THREE.PointsMaterial({size:params.size*1.4, vertexColors:true, transparent:true});
-          group.add(new THREE.Points(geo, mat));
-        }
+        
         if(params.pattern==='Waves'){
           const width = Math.min(1400, params.spread*2); const height = Math.min(600, params.spread); const segX=200; const segY=40;
           const geo = new THREE.PlaneGeometry(width, height, segX, segY);
