@@ -17,7 +17,7 @@ import GUI from 'https://cdn.jsdelivr.net/npm/lil-gui@0.18/dist/lil-gui.esm.min.
     speed: 1.0,
     spread: 600,
     background: '#0b0b0b',
-    motion: 'swirl',
+    
     colorSpeed: 0.6,
     gradient: true,
     gradientAngle: 135,
@@ -55,6 +55,10 @@ import GUI from 'https://cdn.jsdelivr.net/npm/lil-gui@0.18/dist/lil-gui.esm.min.
     rayNoiseScale: 0.8,
     rayNoiseSpeed: 0.6,
     rayNoiseIntensity: 1.2
+    ,
+    // waves controls
+    waveSpeed: 1.0,
+    waveHeight: 18.0
   };
 
   function init() {
@@ -687,7 +691,11 @@ import GUI from 'https://cdn.jsdelivr.net/npm/lil-gui@0.18/dist/lil-gui.esm.min.
         for(let i=0;i<pos.count;i++){
           const ix = i*3;
           const bx = basePos[ix+0];
-          pos.array[ix+2] = Math.sin((bx + time*40) * 0.008) * 18 + Math.cos((i + time*30) * 0.02) * 6;
+          // use params.waveSpeed and params.waveHeight for dynamic control
+          const t = time * params.waveSpeed;
+          const primary = Math.sin((bx + t * 40.0) * 0.008) * params.waveHeight;
+          const secondary = Math.cos((i + t * 30.0) * 0.02) * (params.waveHeight * 0.33);
+          pos.array[ix+2] = primary + secondary;
         }
         pos.needsUpdate = true;
       } else if(type === 'Wireframe Terrain'){
@@ -792,7 +800,6 @@ import GUI from 'https://cdn.jsdelivr.net/npm/lil-gui@0.18/dist/lil-gui.esm.min.
     controllers.pattern = gui.add(params, 'pattern', ['Vortex','Flow Field','Lissajous','Fireflies','Waves','Distorting Plane','Wireframe Terrain','Raymarching']).onChange(()=>{ buildPattern(); updateGUIForPattern(); });
     controllers.colorA = gui.addColor(params, 'colorA').onChange(()=> rebuildColors());
     controllers.colorB = gui.addColor(params, 'colorB').onChange(()=> rebuildColors());
-    controllers.motion = gui.add(params, 'motion', ['swirl','float','burst']).name('Motion');
     controllers.colorSpeed = gui.add(params, 'colorSpeed', 0.0, 3.0, 0.01).name('Color Speed');
     controllers.centers = gui.add(params, 'centers', 1, 8, 1).name('Swirl Centers').onChange(()=> buildPattern());
     controllers.circularSpeed = gui.add(params, 'circularSpeed', 0.0, 4.0, 0.01).name('Circular Speed');
@@ -801,6 +808,8 @@ import GUI from 'https://cdn.jsdelivr.net/npm/lil-gui@0.18/dist/lil-gui.esm.min.
     controllers.count = gui.add(params, 'count', 100, 4000, 1).onChange(()=> buildPattern());
     controllers.size = gui.add(params, 'size', 0.5, 20, 0.1).onChange(()=> { rebuildSizes(); });
     controllers.speed = gui.add(params, 'speed', 0.1, 3, 0.05);
+    controllers.waveSpeed = gui.add(params, 'waveSpeed', 0.0, 6.0, 0.01).name('Wave Speed');
+    controllers.waveHeight = gui.add(params, 'waveHeight', 0.0, 600.0, 0.5).name('Wave Height');
     controllers.spread = gui.add(params, 'spread', 100, 2000, 1).onChange(()=> buildPattern());
     controllers.background = gui.addColor(params, 'background').onChange(v => {
       if(!params.gradient){ renderer.setClearColor(new THREE.Color(v), 1); container.style.background = v; }
@@ -843,7 +852,7 @@ import GUI from 'https://cdn.jsdelivr.net/npm/lil-gui@0.18/dist/lil-gui.esm.min.
       const c = gui._controllers;
       const p = params.pattern;
       // helper to hide all optional controllers first
-      const optional = ['centers','circularSpeed','swirlIntensity','radialWobble','count','size','speed','spread','terrainSegmentsX','terrainSegmentsY','terrainScale','terrainHeight','terrainSpeed','terrainWireframe','raymarchSteps','raymarchMaxDistance','raymarchEpsilon','raymarchLightX','raymarchLightY','raymarchLightZ','raySphereModAmp','raySphereModFreq','rayNoiseScale','rayNoiseSpeed','rayNoiseIntensity'];
+      const optional = ['centers','circularSpeed','swirlIntensity','radialWobble','count','size','speed','spread','waveSpeed','waveHeight','terrainSegmentsX','terrainSegmentsY','terrainScale','terrainHeight','terrainSpeed','terrainWireframe','raymarchSteps','raymarchMaxDistance','raymarchEpsilon','raymarchLightX','raymarchLightY','raymarchLightZ','raySphereModAmp','raySphereModFreq','rayNoiseScale','rayNoiseSpeed','rayNoiseIntensity'];
       optional.forEach(k => { if(c[k] && c[k].hide) c[k].hide(); });
 
       // show common controls
@@ -854,12 +863,14 @@ import GUI from 'https://cdn.jsdelivr.net/npm/lil-gui@0.18/dist/lil-gui.esm.min.
 
       // Particle-like patterns
       if(['Vortex','Flow Field','Lissajous','Fireflies'].includes(p)){
-        ['centers','circularSpeed','swirlIntensity','radialWobble','count','size','speed','spread','motion','colorSpeed'].forEach(k=>{ if(c[k] && c[k].show) c[k].show(); });
+        ['centers','circularSpeed','swirlIntensity','radialWobble','count','size','speed','spread','colorSpeed'].forEach(k=>{ if(c[k] && c[k].show) c[k].show(); });
       }
 
       // Waves / Distorting Plane
       if(p === 'Waves'){
         if(c.size && c.size.show) c.size.show();
+        if(c.waveSpeed && c.waveSpeed.show) c.waveSpeed.show();
+        if(c.waveHeight && c.waveHeight.show) c.waveHeight.show();
       }
       if(p === 'Distorting Plane'){
         if(c.size && c.size.show) c.size.show();

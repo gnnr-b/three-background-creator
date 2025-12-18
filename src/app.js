@@ -16,7 +16,7 @@
     speed: 1.0,
     spread: 600,
     background: '#0b0b0b',
-    motion: 'swirl', // 'swirl' | 'float' | 'burst'
+    
     colorSpeed: 0.6,
     gradient: true,
     gradientAngle: 135
@@ -153,19 +153,10 @@
         const time = clock.getElapsedTime();
         for(let i=0;i<pos.count;i++){
           const i3 = i*3;
-          // apply motion modes
-          if(params.motion === 'swirl'){
-            const angle = (time * 0.2 + offs[i]) * (0.5 + (vels[i3]*0.01));
-            pos.array[i3+0] += Math.cos(angle) * 0.6 * params.speed * delta;
-            pos.array[i3+1] += Math.sin(angle) * 0.35 * params.speed * delta;
-          } else if(params.motion === 'float'){
-            pos.array[i3+0] += Math.sin(time*0.5 + offs[i]) * 0.2 * params.speed * delta;
-            pos.array[i3+1] += Math.cos(time*0.4 + offs[i]) * 0.15 * params.speed * delta;
-          } else if(params.motion === 'burst'){
-            pos.array[i3+0] += vels[i3+0] * 0.02 * params.speed * delta;
-            pos.array[i3+1] += vels[i3+1] * 0.02 * params.speed * delta;
-            pos.array[i3+2] += vels[i3+2] * 0.01 * params.speed * delta;
-          }
+          // fixed swirl-style motion (motion controller removed)
+          const angle = (time * 0.2 + offs[i]) * (0.5 + (vels[i3]*0.01));
+          pos.array[i3+0] += Math.cos(angle) * 0.6 * params.speed * delta;
+          pos.array[i3+1] += Math.sin(angle) * 0.35 * params.speed * delta;
 
           // slow return to center for stability
           pos.array[i3+0] *= 0.9999;
@@ -239,7 +230,7 @@
     gui.add(params, 'pattern', ['Particles','Waves']).onChange(()=>{ buildPattern(); });
     gui.addColor(params, 'colorA').onChange(()=> rebuildColors());
     gui.addColor(params, 'colorB').onChange(()=> rebuildColors());
-    gui.add(params, 'motion', ['swirl','float','burst']).name('Motion');
+    // (motion removed) per-particle movement uses default swirl behavior
     gui.add(params, 'colorSpeed', 0.0, 3.0, 0.01).name('Color Speed');
     gui.add(params, 'count', 100, 4000, 1).onChange(()=> buildPattern());
     gui.add(params, 'size', 0.5, 20, 0.1).onChange(()=> { rebuildSizes(); });
