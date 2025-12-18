@@ -428,6 +428,8 @@ import GUI from 'https://cdn.jsdelivr.net/npm/lil-gui@0.18/dist/lil-gui.esm.min.
       uniform vec3 lightPos;
       uniform vec3 colorA;
       uniform vec3 colorB;
+      uniform vec3 bgColor;
+      uniform float useGradient;
       uniform float sphereModAmp;
       uniform float sphereModFreq;
       uniform float noiseScale;
@@ -506,11 +508,18 @@ import GUI from 'https://cdn.jsdelivr.net/npm/lil-gui@0.18/dist/lil-gui.esm.min.
           float fres = pow(1.0 - max(dot(normalize(-rd), n), 0.0), 3.0);
           vec3 base = mix(colorA, colorB, 0.5 + 0.5 * sin(length(pos.xy) * 0.005 + time * 0.8));
           col = base * (0.15 + 0.85 * diff) + spec * vec3(1.0) + fres * mix(vec3(1.0), base, 0.5) * 0.3;
-        } else {
-          col = mix(colorA, colorB, 0.5 + 0.5 * rd.y);
+          gl_FragColor = vec4(col, 1.0);
+          } else {
+          // sky: when gradient enabled we'll make sky transparent so CSS gradient shows through;
+          // when gradient is disabled, use the bgColor uniform controlled by the background controller
+          if(useGradient > 0.5){
+            col = mix(colorA, colorB, 0.5 + 0.5 * rd.y);
+            gl_FragColor = vec4(col, 0.0);
+          } else {
+            col = bgColor;
+            gl_FragColor = vec4(col, 1.0);
+          }
         }
-
-        gl_FragColor = vec4(col, 1.0);
       }
     `;
 
@@ -531,12 +540,16 @@ import GUI from 'https://cdn.jsdelivr.net/npm/lil-gui@0.18/dist/lil-gui.esm.min.
         lightPos: { value: new THREE.Vector3(params.raymarchLightX, params.raymarchLightY, params.raymarchLightZ) },
         colorA: { value: new THREE.Color(params.colorA) },
         colorB: { value: new THREE.Color(params.colorB) },
+        bgColor: { value: new THREE.Color(params.background) },
         sphereModAmp: { value: params.raySphereModAmp },
         sphereModFreq: { value: params.raySphereModFreq },
         noiseScale: { value: params.rayNoiseScale },
         noiseSpeed: { value: params.rayNoiseSpeed },
         noiseIntensity: { value: params.rayNoiseIntensity }
+      ,
+        useGradient: { value: params.gradient ? 1.0 : 0.0 }
       },
+      transparent: true,
       side: THREE.DoubleSide
     });
 
@@ -717,6 +730,8 @@ import GUI from 'https://cdn.jsdelivr.net/npm/lil-gui@0.18/dist/lil-gui.esm.min.
         if(u.noiseScale) u.noiseScale.value = params.rayNoiseScale;
         if(u.noiseSpeed) u.noiseSpeed.value = params.rayNoiseSpeed;
         if(u.noiseIntensity) u.noiseIntensity.value = params.rayNoiseIntensity;
+        if(u.useGradient) u.useGradient.value = params.gradient ? 1.0 : 0.0;
+        if(u.bgColor) u.bgColor.value = new THREE.Color(params.background);
       }
     });
 
@@ -861,10 +876,26 @@ import GUI from 'https://cdn.jsdelivr.net/npm/lil-gui@0.18/dist/lil-gui.esm.min.
       if(p === 'Raymarching'){
         ['raymarchSteps','raymarchMaxDistance','raymarchEpsilon','raymarchLightX','raymarchLightY','raymarchLightZ','raySphereModAmp','raySphereModFreq','rayNoiseScale','rayNoiseSpeed','rayNoiseIntensity'].forEach(k=>{ if(c[k] && c[k].show) c[k].show(); });
       }
+      // apply background visibility/sync after changing controllers
+      if(params.gradient) {
+        renderer.setClearColor(0x000000, 0);
+        updateBackgroundGradient();
+      } else {
+        renderer.setClearColor(new THREE.Color(params.background), 1);
+        container.style.background = params.background;
+      }
     }
 
-    // call once to set initial visibility
+      // call once to set initial visibility
     updateGUIForPattern();
+    // ensure renderer / container background matches current params
+    if(params.gradient) {
+      renderer.setClearColor(0x000000, 0);
+      updateBackgroundGradient();
+    } else {
+      renderer.setClearColor(new THREE.Color(params.background), 1);
+      container.style.background = params.background;
+    }
 
     document.getElementById('download-html').addEventListener('click', () => {
       const html = generateStandaloneHTML();
