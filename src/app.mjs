@@ -39,8 +39,6 @@ import GUI from 'https://cdn.jsdelivr.net/npm/lil-gui@0.18/dist/lil-gui.esm.min.
     terrainWireframe: true
     ,
     
-    // layered parallax planes (removed)
-    
     // raymarching shader params
     raymarchSteps: 80,
     raymarchMaxDistance: 2000,
@@ -107,18 +105,24 @@ import GUI from 'https://cdn.jsdelivr.net/npm/lil-gui@0.18/dist/lil-gui.esm.min.
     }
   }
 
+  // map of available patterns to their factory functions. This makes it easy
+  // to add new patterns or compose them without editing buildPattern.
+  const patternFactories = {
+    'Vortex': createVortex,
+    'Flow Field': createFlowField,
+    'Lissajous': createLissajous,
+    'Fireflies': createFireflies,
+    'Waves': createWaves,
+    'Distorting Plane': createDistortingPlane,
+    'Wireframe Terrain': createWireframeTerrain,
+    'Raymarching': createRaymarching
+  };
+
   function buildPattern(){
     clearGroup();
     const p = params.pattern;
-    if(p === 'Vortex') createVortex();
-    else if(p === 'Flow Field') createFlowField();
-    else if(p === 'Lissajous') createLissajous();
-    else if(p === 'Fireflies') createFireflies();
-    else if(p === 'Waves') createWaves();
-    else if(p === 'Distorting Plane') createDistortingPlane();
-    else if(p === 'Wireframe Terrain') createWireframeTerrain();
-    else if(p === 'Raymarching') createRaymarching();
-    else createVortex();
+    const factory = patternFactories[p] || createVortex;
+    factory();
   }
 
   function createParticles(){
@@ -417,8 +421,7 @@ import GUI from 'https://cdn.jsdelivr.net/npm/lil-gui@0.18/dist/lil-gui.esm.min.
     group.add(mesh);
   }
 
-  // Gradient Noise Plane removed
-
+  // (old gradient-noise plane removed earlier)
   function createRaymarching(){
     // Fullscreen raymarching quad (screen-space SDF raymarch)
     const geom = new THREE.PlaneGeometry(2,2);
@@ -564,7 +567,7 @@ import GUI from 'https://cdn.jsdelivr.net/npm/lil-gui@0.18/dist/lil-gui.esm.min.
     group.add(mesh);
   }
 
-  // Layered Parallax removed
+  // Layered Parallax removed (cleaned up)
 
   function createWireframeTerrain(){
     // Subdivided plane geometry used as a wireframe terrain
@@ -726,7 +729,7 @@ import GUI from 'https://cdn.jsdelivr.net/npm/lil-gui@0.18/dist/lil-gui.esm.min.
         if(u.speed && 'shaderSpeed' in params) u.speed.value = params.shaderSpeed;
         if(u.colorA) u.colorA.value = new THREE.Color(params.colorA);
         if(u.colorB) u.colorB.value = new THREE.Color(params.colorB);
-        // gradient noise uniforms (removed - gradient-noise plane deleted)
+        // gradient-noise plane was deleted earlier; keep raymarch uniforms here
         // raymarch uniforms
         if(u.resolution && typeof u.resolution.value !== 'undefined') u.resolution.value.set(container.clientWidth, container.clientHeight);
         if(u.steps) u.steps.value = params.raymarchSteps;
@@ -829,7 +832,7 @@ import GUI from 'https://cdn.jsdelivr.net/npm/lil-gui@0.18/dist/lil-gui.esm.min.
     controllers.terrainSpeed = gui.add(params, 'terrainSpeed', 0.0, 4.0, 0.01).name('Terrain Speed');
     controllers.terrainWireframe = gui.add(params, 'terrainWireframe').name('Wireframe');
 
-    // Layered Parallax controls (removed)
+    // Layered Parallax controls removed earlier
 
     // Raymarching controls
     controllers.raymarchSteps = gui.add(params, 'raymarchSteps', 8, 256, 1).name('Raymarch Steps');
@@ -881,9 +884,10 @@ import GUI from 'https://cdn.jsdelivr.net/npm/lil-gui@0.18/dist/lil-gui.esm.min.
         ['terrainSegmentsX','terrainSegmentsY','terrainScale','terrainHeight','terrainSpeed','terrainWireframe'].forEach(k=>{ if(c[k] && c[k].show) c[k].show(); });
       }
 
-      // Layered Parallax (removed)
+      // Layered Parallax removed (cleaned up)
 
       // Raymarching
+        // Raymarching
       if(p === 'Raymarching'){
         ['raymarchSteps','raymarchMaxDistance','raymarchEpsilon','raymarchLightX','raymarchLightY','raymarchLightZ','raySphereModAmp','raySphereModFreq','rayNoiseScale','rayNoiseSpeed','rayNoiseIntensity'].forEach(k=>{ if(c[k] && c[k].show) c[k].show(); });
       }
